@@ -1,0 +1,8 @@
+// Opt-in Release configuration for unsigned Bitwarden-Duo simulator builds.
+// The standard XcodeGen project never includes this file; pass it explicitly.
+// Disable Crashlytics in app and Watch code, and exclude both upstream service plists.
+// This does not configure a Duo Firebase project and must not be treated as a signed archive.
+#include "Bitwarden-Duo.xcconfig.example"
+
+EXCLUDED_SOURCE_FILE_NAMES = GoogleService-Info.plist
+SWIFT_ACTIVE_COMPILATION_CONDITIONS = $(inherited) BITWARDEN_DUO_DISABLE_FIREBASE

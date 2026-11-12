@@ -67,6 +67,69 @@ class BitwardenDuoIdentityTests(unittest.TestCase):
         self.assertIn("EXCLUDED_SOURCE_FILE_NAMES=GoogleService-Info.plist", overrides)
         self.assertNotIn("PROVISIONING_PROFILE_SPECIFIER=", "\n".join(overrides))
 
+    def test_release_override_is_fork_only_and_disables_firebase_fail_closed(self) -> None:
+        settings, errors = validator.release_config_errors(ROOT)
+        self.assertEqual(errors, [])
+        self.assertEqual(settings["BASE_BUNDLE_ID"], "com.sputnicity.bitwarden-duo")
+        self.assertEqual(settings["EXCLUDED_SOURCE_FILE_NAMES"], "GoogleService-Info.plist")
+        self.assertIn("BITWARDEN_DUO_DISABLE_FIREBASE", settings["SWIFT_ACTIVE_COMPILATION_CONDITIONS"])
+        overrides = validator.release_xcodebuild_overrides(settings)
+        self.assertIn("EXCLUDED_SOURCE_FILE_NAMES=GoogleService-Info.plist", overrides)
+        self.assertTrue(any(item.startswith("SWIFT_ACTIVE_COMPILATION_CONDITIONS=") and "BITWARDEN_DUO_DISABLE_FIREBASE" in item for item in overrides))
+        project_spec = (ROOT / "project-pm.yml").read_text(encoding="utf-8")
+        self.assertNotIn("Configs-fork/", project_spec)
+        upstream_release = (ROOT / "Configs/Bitwarden-Release.xcconfig").read_text(encoding="utf-8")
+        self.assertIn("FIREBASE_CONFIG_FILENAME = GoogleService-Info.plist", upstream_release)
+        self.assertNotIn("BITWARDEN_DUO_DISABLE_FIREBASE", upstream_release)
+
+    def test_release_override_rejects_missing_firebase_exclusion_or_compile_guard(self) -> None:
+        config = ROOT / validator.RELEASE_CONFIG
+        original = config.read_text(encoding="utf-8")
+        try:
+            config.write_text(
+                original.replace(
+                    "EXCLUDED_SOURCE_FILE_NAMES = GoogleService-Info.plist",
+                    "EXCLUDED_SOURCE_FILE_NAMES =",
+                ),
+                encoding="utf-8",
+            )
+            _, errors = validator.release_config_errors(ROOT)
+            self.assertTrue(any("GoogleService-Info.plist" in error for error in errors), errors)
+            self.assertIn("FIREBASE", {code for code, _ in validator.scan_blockers(ROOT)})
+            config.write_text(original.replace("BITWARDEN_DUO_DISABLE_FIREBASE", "BITWARDEN_DUO_FIREBASE"), encoding="utf-8")
+            _, errors = validator.release_config_errors(ROOT)
+            self.assertTrue(any("BITWARDEN_DUO_DISABLE_FIREBASE" in error for error in errors), errors)
+        finally:
+            config.write_text(original, encoding="utf-8")
+
+    def test_release_config_fails_closed_when_source_guards_regress(self) -> None:
+        regressions = (
+            (
+                ROOT / "Bitwarden/Application/Services/ErrorReporter/ErrorReporterFactory.swift",
+                "#if DEBUG || BITWARDEN_DUO_DISABLE_FIREBASE",
+                "#if DEBUG",
+            ),
+            (
+                ROOT / "Bitwarden/Application/Services/ErrorReporter/CrashlyticsErrorReporter.swift",
+                "#if !BITWARDEN_DUO_DISABLE_FIREBASE",
+                "#if DEBUG",
+            ),
+            (
+                ROOT / "BitwardenWatchApp/ExtensionDelegate.swift",
+                "#if !DEBUG && !BITWARDEN_DUO_DISABLE_FIREBASE",
+                "#if !DEBUG",
+            ),
+        )
+        for source, old_guard, replacement in regressions:
+            original = source.read_text(encoding="utf-8")
+            try:
+                self.assertIn(old_guard, original)
+                source.write_text(original.replace(old_guard, replacement), encoding="utf-8")
+                _, errors = validator.release_config_errors(ROOT)
+                self.assertTrue(errors, f"validator accepted Firebase guard regression in {source}")
+            finally:
+                source.write_text(original, encoding="utf-8")
+
     def test_app_group_and_keychain_entitlements_remain_derived(self) -> None:
         self.assertEqual(validator.identity_entitlement_errors(ROOT), [])
         app = validator._read_plist(ROOT / "Bitwarden/Application/Support/Bitwarden.entitlements")
@@ -101,13 +164,13 @@ class BitwardenDuoIdentityTests(unittest.TestCase):
 
     def test_offline_audit_reports_known_integration_blockers(self) -> None:
         codes = {code for code, _ in validator.scan_blockers(ROOT)}
+        self.assertNotIn("FIREBASE", codes)
         self.assertTrue(
             {
                 "FORK_BUILD_INTEGRATION",
                 "CALLBACKS",
                 "GENERIC_URL_SCHEME",
                 "ASSOCIATED_DOMAINS",
-                "FIREBASE",
                 "WATCH_KEYCHAIN_SERVICE",
                 "EXTENSION_UTI",
                 "BUILD_AUTOMATION",
@@ -159,6 +222,7 @@ class BuildHelperIntegrationTests(unittest.TestCase):
             "BitwardenAutoFillExtension/Application/Support/BitwardenAutoFill.entitlements",
             "BitwardenShareExtension/Application/Support/BitwardenShareExtension.entitlements",
             "Bitwarden/Application/Services/ErrorReporter/ErrorReporterFactory.swift",
+            "Bitwarden/Application/Services/ErrorReporter/CrashlyticsErrorReporter.swift",
             "BitwardenWatchApp/ExtensionDelegate.swift",
         ):
             destination = self.root / relative
@@ -204,11 +268,13 @@ printf '%s\\0' "$@" > "$MOCK_XCODEBUILD_ARGS_FILE"
 printf '%s\\n' "${BITWARDEN_DUO_MINT_BIN_DIR:-}" > "$MOCK_MINT_DIR_FILE"
 printf '%s\\n' "${BITWARDEN_SDK_PATH:-}" > "$MOCK_SDK_DIR_FILE"
 derived=""
+configuration=Debug
 while (($#)); do
     if [[ "$1" == "-derivedDataPath" ]]; then shift; derived="$1"; fi
+    if [[ "$1" == "-configuration" ]]; then shift; configuration="$1"; fi
     shift
 done
-app="$derived/Build/Products/Debug-iphonesimulator/Bitwarden.app"
+app="$derived/Build/Products/${configuration}-iphonesimulator/Bitwarden.app"
 mkdir -p "$app"
 if [[ "${MOCK_FIREBASE:-0}" == 1 ]]; then
     watch="$app/Watch/BitwardenWatchApp.app"
@@ -345,6 +411,35 @@ exit "${MOCK_BUILD_STATUS:-0}"
         self.assertFalse(any(arg in args for arg in ("-allowProvisioningUpdates", "-exportArchive")))
         self.assertEqual(Path(self.df_path_file.read_text(encoding="utf-8").strip()), self.temp.resolve())
         self.assertIn("no GoogleService-Info.plist", result.stdout)
+
+    def test_release_build_uses_explicit_firebase_isolation_overrides(self) -> None:
+        result = self._run_helper(MOCK_XCODE_VERSION="27.0", BITWARDEN_DUO_CONFIGURATION="Release")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        args = self.args_file.read_bytes().decode().rstrip("\0").split("\0")
+        self.assertEqual(args[args.index("-configuration") + 1], "Release")
+        self.assertEqual(
+            args[args.index("-xcconfig") + 1],
+            str(self.root / "Configs-fork/Bitwarden-Duo-Release.xcconfig"),
+        )
+        expected = validator.release_xcodebuild_overrides(
+            validator.parse_xcconfig(self.root / validator.RELEASE_CONFIG)
+        )
+        self.assertEqual(args[-len(expected):], expected)
+        self.assertIn("SWIFT_ACTIVE_COMPILATION_CONDITIONS=$(inherited) BITWARDEN_DUO_DISABLE_FIREBASE", expected)
+        self.assertIn("EXCLUDED_SOURCE_FILE_NAMES=GoogleService-Info.plist", expected)
+        self.assertIn("Release-iphonesimulator", result.stdout)
+        self.assertIn("no GoogleService-Info.plist", result.stdout)
+
+    def test_embedded_watch_firebase_plist_blocks_release_success(self) -> None:
+        result = self._run_helper(
+            MOCK_XCODE_VERSION="27.0",
+            BITWARDEN_DUO_CONFIGURATION="Release",
+            MOCK_FIREBASE="1",
+        )
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertIn("BLOCKED [UPSTREAM_FIREBASE_RESOURCE]", result.stderr)
+        self.assertIn("BitwardenWatchApp.app/GoogleService-Info.plist", result.stderr)
+        self.assertNotIn("PASS: unsigned Release simulator product created", result.stdout)
 
     def test_relative_output_that_resolves_inside_repo_is_rejected_before_build(self) -> None:
         result = self._run_helper(

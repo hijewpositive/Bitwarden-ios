@@ -1,3 +1,4 @@
+#if !BITWARDEN_DUO_DISABLE_FIREBASE
 import BitwardenKit
 import BitwardenShared
 import FirebaseCore
@@ -71,3 +72,4 @@ final class CrashlyticsErrorReporter: ErrorReporter {
         Crashlytics.crashlytics().setUserID(userId)
     }
 }
+#endif

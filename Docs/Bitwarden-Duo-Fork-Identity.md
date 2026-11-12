@@ -1,6 +1,6 @@
-# Bitwarden-Duo fork identity and unsigned simulator path
+# Bitwarden-Duo fork identity and unsigned simulator paths
 
-This adds an **opt-in, Debug-only iOS Simulator identity path** for the Bitwarden-Duo fork. It does not change the shipping `project-pm.yml`, `Configs/`, entitlements, auth flow, service endpoints, or any Apple account. `Configs-fork/Bitwarden-Duo-Simulator.xcconfig` is supplied explicitly to the fork helper; the standard XcodeGen project never includes it.
+This adds **opt-in, unsigned iOS Simulator identity paths** for Debug and Release builds of the Bitwarden-Duo fork. It does not change the shipping `project-pm.yml`, `Configs/`, entitlements, auth flow, service endpoints, or any Apple account. The `Configs-fork/` xcconfigs are supplied explicitly to the fork helper; the standard XcodeGen project never includes them.
 
 ## Candidate identity matrix
 
@@ -38,7 +38,7 @@ BITWARDEN_DUO_SOURCE_PACKAGES="/path/to/existing/SourcePackages" \
 Scripts-fork/build_bitwarden_duo_simulator.sh
 ```
 
-Omit the version override when using the pinned Xcode. The override only acknowledges that exact version; it does not change the repository pin or certify Xcode compatibility.
+Omit the version override when using the pinned Xcode. The override only acknowledges that exact version; it does not change the repository pin or certify Xcode compatibility. The helper defaults to Debug. To compile Xcode's Release configuration with the fork's fail-closed Firebase settings, add `BITWARDEN_DUO_CONFIGURATION=Release` to the same invocation.
 
 The helper:
 
@@ -47,13 +47,15 @@ The helper:
 - requires the generated workspace projects and all already-present Swift package checkouts, plus cached `license-plist`, `sourcery`, and `swiftgen` binaries;
 - uses a local-only `Scripts-fork/mint` dispatcher restricted to those cached build tools, `-disableAutomaticPackageResolution`, and `-skipPackageUpdates`; it does not run Mint installs or SwiftPM resolve/update commands;
 - checks the Xcode selected through `xcrun` (the same tool used for the build). A non-pinned version fails by default; an explicit exact-version opt-in is required to proceed;
-- builds the `Bitwarden` scheme in `Debug` for generic iOS Simulator. Identity, signing-off, and Firebase-resource-exclusion settings are emitted as `xcodebuild` command-line build-setting overrides as well as supplied by the opt-in xcconfig, so target xcconfig values cannot silently replace them;
+- builds the `Bitwarden` scheme in the selected `Debug` or `Release` configuration for generic iOS Simulator. Identity, signing-off, and Firebase-resource-exclusion settings are emitted as `xcodebuild` command-line build-setting overrides as well as supplied by the opt-in xcconfig; Release also forces the Firebase-disable Swift condition so target xcconfig values cannot silently replace it;
 - limits the build to one job and sets the active Mac architecture explicitly (`ARCHS=<uname -m> ONLY_ACTIVE_ARCH=YES`). Existing DerivedData is never reused unless the explicit reuse flag is set, and the caller remains responsible for monitoring free space during the build;
 - writes DerivedData outside the repository, then recursively checks the app bundle—including its embedded Watch app—for any `GoogleService-Info.plist` before reporting success.
 
 It does **not** install or launch the app, archive, sign, access a portal/API, or upload anything. A successful compile is not proof that unsigned app-group/keychain behavior works in Simulator.
 
-The simulator override excludes upstream Firebase plist resources. The app's Debug `ErrorReporterFactory` selects `OSLogErrorReporter`, and the Watch delegate calls `FirebaseApp.configure()` only outside `DEBUG`. The validator checks those source guards and the config exclusion; the build helper additionally scans the produced app recursively, including the embedded Watch bundle, before reporting success. Do not use Release/TestFlight settings: they still include upstream Firebase integration and remain blocked pending Duo-owned Firebase config or an explicitly reviewed removal.
+The Debug and Release overrides exclude the app and Watch `GoogleService-Info.plist` resources. In Release, the fork-only `BITWARDEN_DUO_DISABLE_FIREBASE` condition makes the app use `OSLogErrorReporter`, compiles out the Crashlytics reporter implementation, and prevents the Watch delegate from importing/configuring Firebase. The standard upstream Release configuration does not define that condition and retains its original Crashlytics behavior. The Firebase Crashlytics package remains a target dependency for unchanged upstream builds; this path does not initialize it or make Crashlytics calls. No Firebase Messaging product or Messaging API call site was found in the PM/Watch targets, so the existing notification extension and other network behavior are unchanged. The validator checks the opt-in config and source guards; the build helper scans the compiled app recursively, including the embedded Watch bundle. These checks do not establish that all app networking is disabled.
+
+This Release configuration is **only an unsigned simulator compile**, not a signed archive or TestFlight path. It deliberately supplies no Duo Firebase service config and fails closed rather than substituting the upstream project's plist. Do not use it for distribution until fork signing, callbacks, capabilities, export compliance, and the remaining blockers below are independently resolved.
 
 The wrapper avoids its own dependency-network paths by requiring cached Swift packages/tools, disabling automatic package resolution, skipping package updates, and intercepting Mint with a local dispatcher. It is **not** an OS-level network sandbox; if zero outbound traffic is mandatory, the Mac must separately be run with network access blocked.
 
@@ -61,7 +63,7 @@ The wrapper avoids its own dependency-network paths by requiring cached Swift pa
 
 - Authentication callbacks still use shared `bitwarden` and generic `otpauth` schemes; callback and server redirect behavior must be designed and tested before installing both apps.
 - Existing associated domains point to Bitwarden-owned domains; no fork AASA/credential authorization is established.
-- Release Firebase config, Watch keychain service label, and Action extension UTI remain upstream-specific and are not changed by the simulator config.
+- Watch keychain service label and Action extension UTI remain upstream-specific and are not changed by these simulator configs. The fork Release simulator path now excludes upstream Firebase plists and disables Crashlytics; it does not provide a Duo Firebase project.
 - Upstream Fastlane/variant automation, export-compliance metadata, extension/watch branding, App Store Connect record, team ownership, app-group registration, capabilities, provisioning, signing, and TestFlight processing remain unverified.
 
 For a deliberate incremental continuation with an existing task-owned cache, pass all paths explicitly:
@@ -83,9 +85,11 @@ Only use the reuse mode for task-owned DerivedData and continue monitoring the d
 python3 Scripts-fork/test_bitwarden_duo_identity.py
 python3 Scripts-fork/validate_bitwarden_duo_identity.py --check-simulator-config
 python3 Scripts-fork/validate_bitwarden_duo_identity.py --emit-xcodebuild-overrides
+python3 Scripts-fork/validate_bitwarden_duo_identity.py --check-release-config
+python3 Scripts-fork/validate_bitwarden_duo_identity.py --emit-release-xcodebuild-overrides
 python3 Scripts-fork/validate_bitwarden_duo_identity.py
 ```
 
-The offline tests exercise the build wrapper with fake `xcrun`/`xcodebuild`/disk/process commands and synthetic app/watch bundle paths. They verify version and disk gates, explicit cache reuse, one-job argument forwarding, path handling, local Mint dispatch, and the recursive Firebase fail-closed check; they do **not** run Xcode, verify effective Xcode build settings, or prove a compiled product is usable.
+The offline tests exercise the build wrapper with fake `xcrun`/`xcodebuild`/disk/process commands and synthetic app/watch bundle paths. They verify both configuration modes, version and disk gates, explicit cache reuse, one-job argument forwarding, path handling, local Mint dispatch, and the recursive Firebase fail-closed check; they do **not** run Xcode, verify effective Xcode build settings, or prove a compiled product is usable.
 
 The repository pin remains `27.0`; any other selected Xcode requires an exact-version opt-in (illustrated with `27.2` above). No signing, provisioning, or distribution readiness is established. An unsigned simulator build does not prove app-group/keychain registration or runtime behavior.

@@ -5,8 +5,8 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 ROOT="$(cd -- "$SCRIPT_DIR/.." && pwd -P)"
-CONFIG="$ROOT/Configs-fork/Bitwarden-Duo-Simulator.xcconfig"
 VALIDATOR="$ROOT/Scripts-fork/validate_bitwarden_duo_identity.py"
+CONFIGURATION="${BITWARDEN_DUO_CONFIGURATION:-Debug}"
 
 fail() {
     local code="$1"
@@ -14,6 +14,20 @@ fail() {
     printf 'BLOCKED [%s]: %s\n' "$code" "$*" >&2
     exit 2
 }
+
+case "$CONFIGURATION" in
+    Debug)
+        CONFIG="$ROOT/Configs-fork/Bitwarden-Duo-Simulator.xcconfig"
+        VALIDATION_MODE="simulator"
+        EXPECTED_OVERRIDE_COUNT=8
+        ;;
+    Release)
+        CONFIG="$ROOT/Configs-fork/Bitwarden-Duo-Release.xcconfig"
+        VALIDATION_MODE="release"
+        EXPECTED_OVERRIDE_COUNT=9
+        ;;
+    *) fail "CONFIGURATION" "BITWARDEN_DUO_CONFIGURATION must be Debug or Release" ;;
+esac
 
 resolve_path() {
     python3 - "$1" <<'PY'
@@ -139,9 +153,18 @@ then
 fi
 
 
-python3 "$VALIDATOR" --check-simulator-config
-if ! override_output="$(python3 "$VALIDATOR" --emit-xcodebuild-overrides)"; then
-    fail "SIMULATOR_CONFIG" "could not emit validated xcodebuild overrides"
+if [[ "$VALIDATION_MODE" == "simulator" ]]; then
+    check_flag="--check-simulator-config"
+    overrides_flag="--emit-xcodebuild-overrides"
+else
+    check_flag="--check-release-config"
+    overrides_flag="--emit-release-xcodebuild-overrides"
+fi
+if ! python3 "$VALIDATOR" "$check_flag"; then
+    fail "FIREBASE_CONFIG" "the opt-in $CONFIGURATION Firebase isolation config did not validate"
+fi
+if ! override_output="$(python3 "$VALIDATOR" "$overrides_flag")"; then
+    fail "FIREBASE_CONFIG" "could not emit validated $CONFIGURATION xcodebuild overrides"
 fi
 BUILD_OVERRIDES=()
 while IFS= read -r setting; do
@@ -149,7 +172,7 @@ while IFS= read -r setting; do
         BUILD_OVERRIDES+=("$setting")
     fi
 done <<< "$override_output"
-[[ "${#BUILD_OVERRIDES[@]}" -eq 8 ]] || fail "SIMULATOR_CONFIG" "validator emitted an incomplete set of build-setting overrides"
+[[ "${#BUILD_OVERRIDES[@]}" -eq "$EXPECTED_OVERRIDE_COUNT" ]] || fail "FIREBASE_CONFIG" "validator emitted an incomplete set of $CONFIGURATION build-setting overrides"
 
 mkdir -p "$(dirname "$DERIVED_DATA")"
 if [[ "$reuse_derived_data" == YES ]]; then
@@ -173,7 +196,7 @@ esac
 xcrun xcodebuild \
     -workspace "$ROOT/Bitwarden.xcworkspace" \
     -scheme Bitwarden \
-    -configuration Debug \
+    -configuration "$CONFIGURATION" \
     -destination "generic/platform=iOS Simulator" \
     -jobs 1 \
     -derivedDataPath "$DERIVED_DATA" \
@@ -185,12 +208,12 @@ xcrun xcodebuild \
     ONLY_ACTIVE_ARCH=YES \
     "${BUILD_OVERRIDES[@]}"
 
-APP="$DERIVED_DATA/Build/Products/Debug-iphonesimulator/Bitwarden.app"
+APP="$DERIVED_DATA/Build/Products/${CONFIGURATION}-iphonesimulator/Bitwarden.app"
 [[ -d "$APP" ]] || fail "APP_MISSING" "xcodebuild succeeded but did not produce $APP"
 firebase_plists="$(find "$APP" -name GoogleService-Info.plist -print)"
 if [[ -n "$firebase_plists" ]]; then
     fail "UPSTREAM_FIREBASE_RESOURCE" "upstream Firebase plist remains in the product; do not install or launch this build: $firebase_plists"
 fi
-printf 'PASS: unsigned Debug simulator product created at %s\n' "$APP"
+printf 'PASS: unsigned %s simulator product created at %s\n' "$CONFIGURATION" "$APP"
 printf 'PASS: no GoogleService-Info.plist exists in the app/watch bundles\n'
 printf 'No simulator install, launch, archive, signing, or upload was performed.\n'

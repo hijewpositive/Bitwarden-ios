@@ -22,6 +22,7 @@ EXPECTED = {
 }
 
 SIMULATOR_CONFIG = "Configs-fork/Bitwarden-Duo-Simulator.xcconfig"
+RELEASE_CONFIG = "Configs-fork/Bitwarden-Duo-Release.xcconfig"
 SIMULATOR_OVERRIDE_KEYS = (
     "DEVELOPMENT_TEAM",
     "ORGANIZATION_IDENTIFIER",
@@ -32,6 +33,7 @@ SIMULATOR_OVERRIDE_KEYS = (
     "CODE_SIGNING_REQUIRED",
     "EXCLUDED_SOURCE_FILE_NAMES",
 )
+RELEASE_OVERRIDE_KEYS = SIMULATOR_OVERRIDE_KEYS + ("SWIFT_ACTIVE_COMPILATION_CONDITIONS",)
 
 UPSTREAM_TEAM = "LTZ2PFU5D6"
 UPSTREAM_ORG = "com.8bit"
@@ -259,14 +261,64 @@ def simulator_config_errors(root: Path) -> tuple[dict[str, str], list[str]]:
         encoding="utf-8"
     )
     if not re.search(
-        r"#if\s+DEBUG.*?OSLogErrorReporter\(\).*?#else.*?CrashlyticsErrorReporter\.shared.*?#endif",
+        r"#if\s+DEBUG\s*\|\|\s*BITWARDEN_DUO_DISABLE_FIREBASE.*?OSLogErrorReporter\(\).*?#else.*?CrashlyticsErrorReporter\.shared.*?#endif",
         factory,
         re.DOTALL,
     ):
         errors.append("Debug app path must continue to select OSLogErrorReporter instead of Crashlytics")
     watch_delegate = (root / "BitwardenWatchApp/ExtensionDelegate.swift").read_text(encoding="utf-8")
-    if not re.search(r"#if\s+!DEBUG.*?FirebaseApp\.configure\(\).*?#endif", watch_delegate, re.DOTALL):
+    if not re.search(r"#if\s+!DEBUG\s*&&\s*!BITWARDEN_DUO_DISABLE_FIREBASE.*?FirebaseApp\.configure\(\).*?#endif", watch_delegate, re.DOTALL):
         errors.append("Watch Firebase configuration must remain excluded from Debug builds")
+    return settings, errors
+
+
+def release_config_errors(root: Path) -> tuple[dict[str, str], list[str]]:
+    """Validate the explicit, unsigned Release configuration that disables Firebase."""
+    errors: list[str] = []
+    config_path = root / RELEASE_CONFIG
+    if not config_path.is_file():
+        return {}, [f"missing Release Firebase isolation override: {RELEASE_CONFIG}"]
+    try:
+        settings = parse_xcconfig(config_path)
+    except (OSError, ValueError, FileNotFoundError) as error:
+        return {}, [f"could not parse Release Firebase isolation override: {error}"]
+
+    errors.extend(
+        validate_settings(
+            settings,
+            allowed_extra=frozenset({"EXCLUDED_SOURCE_FILE_NAMES", "SWIFT_ACTIVE_COMPILATION_CONDITIONS"}),
+        )
+    )
+    if settings.get("EXCLUDED_SOURCE_FILE_NAMES") != "GoogleService-Info.plist":
+        errors.append("Release override must exclude upstream GoogleService-Info.plist resources")
+    if settings.get("SWIFT_ACTIVE_COMPILATION_CONDITIONS") != "$(inherited) BITWARDEN_DUO_DISABLE_FIREBASE":
+        errors.append("Release override must inherit Swift conditions and define BITWARDEN_DUO_DISABLE_FIREBASE")
+    for project_spec in ("project-pm.yml", "project-bwk.yml"):
+        project_text = (root / project_spec).read_text(encoding="utf-8")
+        if RELEASE_CONFIG in project_text or "Configs-fork/" in project_text:
+            errors.append(f"fork Release settings must not be wired into standard XcodeGen spec {project_spec}")
+
+    factory = (root / "Bitwarden/Application/Services/ErrorReporter/ErrorReporterFactory.swift").read_text(
+        encoding="utf-8"
+    )
+    if not re.search(
+        r"#if\s+DEBUG\s*\|\|\s*BITWARDEN_DUO_DISABLE_FIREBASE.*?OSLogErrorReporter\(\).*?#else.*?CrashlyticsErrorReporter\.shared.*?#endif",
+        factory,
+        re.DOTALL,
+    ):
+        errors.append("Release fork path must select OSLogErrorReporter instead of Crashlytics")
+    reporter = (root / "Bitwarden/Application/Services/ErrorReporter/CrashlyticsErrorReporter.swift").read_text(
+        encoding="utf-8"
+    )
+    if not re.match(r"\s*#if\s+!BITWARDEN_DUO_DISABLE_FIREBASE\b", reporter) or not reporter.rstrip().endswith("#endif"):
+        errors.append("Crashlytics reporter implementation must be compiled out for the Duo Release condition")
+    watch_delegate = (root / "BitwardenWatchApp/ExtensionDelegate.swift").read_text(encoding="utf-8")
+    if not re.search(
+        r"#if\s+!DEBUG\s*&&\s*!BITWARDEN_DUO_DISABLE_FIREBASE.*?FirebaseApp\.configure\(\).*?#endif",
+        watch_delegate,
+        re.DOTALL,
+    ):
+        errors.append("Release Watch path must not configure Firebase when Duo isolation is enabled")
     return settings, errors
 
 
@@ -274,11 +326,15 @@ def simulator_xcodebuild_overrides(settings: dict[str, str]) -> list[str]:
     return [f"{key}={settings[key]}" for key in SIMULATOR_OVERRIDE_KEYS]
 
 
+def release_xcodebuild_overrides(settings: dict[str, str]) -> list[str]:
+    return [f"{key}={settings[key]}" for key in RELEASE_OVERRIDE_KEYS]
+
+
 def scan_blockers(root: Path) -> list[tuple[str, str]]:
     blockers: list[tuple[str, str]] = []
     project_yml = (root / "project-pm.yml").read_text(encoding="utf-8")
     if "Configs-fork/" not in project_yml:
-        blockers.append(("FORK_BUILD_INTEGRATION", "No Duo Release/TestFlight target is wired into XcodeGen. The opt-in Debug simulator path uses an external -xcconfig override and leaves the standard project untouched."))
+        blockers.append(("FORK_BUILD_INTEGRATION", "No dedicated Duo Release/archive/TestFlight target is wired into XcodeGen. The opt-in unsigned Debug/Release simulator path uses an external -xcconfig override and leaves the standard project untouched."))
 
     auth_service = (root / "BitwardenShared/Core/Auth/Services/AuthService.swift").read_text(encoding="utf-8")
     app_info = _read_plist(root / "Bitwarden/Application/Support/Info.plist")
@@ -297,14 +353,9 @@ def scan_blockers(root: Path) -> list[tuple[str, str]]:
     if any("bitwarden." in value or "bitwarden-gov.com" in value for value in associated):
         blockers.append(("ASSOCIATED_DOMAINS", "The shipping entitlements point at Bitwarden-owned universal-link/web-credential domains; a Duo app needs authorized AASA coverage or a reviewed domain policy."))
 
-    app_firebase = _read_plist(root / "Bitwarden/Application/Support/GoogleService-Info.plist")
-    watch_firebase = _read_plist(root / "BitwardenWatchApp/GoogleService-Info.plist")
-    if (
-        app_firebase.get("BUNDLE_ID") == UPSTREAM_BUNDLE
-        and watch_firebase.get("BUNDLE_ID") == f"{UPSTREAM_BUNDLE}.watchkitapp"
-        and "GoogleService-Info.plist" in project_yml
-    ):
-        blockers.append(("FIREBASE", "Release/TestFlight still has upstream Firebase config and Crashlytics behavior. The Duo simulator override excludes service plist resources and Debug uses non-Firebase error reporting; do not ship or enable Release until Duo-owned Firebase config exists or the integration is deliberately removed."))
+    _, release_firebase_errors = release_config_errors(root)
+    if release_firebase_errors:
+        blockers.append(("FIREBASE", "Release Firebase isolation is missing or invalid: " + "; ".join(release_firebase_errors)))
 
     watch_helper = (root / "BitwardenWatchApp/Helpers/KeychainHelper.swift").read_text(encoding="utf-8")
     if UPSTREAM_BUNDLE in watch_helper:
@@ -325,7 +376,7 @@ def scan_blockers(root: Path) -> list[tuple[str, str]]:
     if compliance.get("ITSAppUsesNonExemptEncryption") is True and "ITSEncryptionExportComplianceCode" in compliance:
         blockers.append(("EXPORT_COMPLIANCE", "The upstream app plist declares non-exempt encryption and an export-compliance code; the Duo owner must independently confirm the correct filing/status before distribution."))
 
-    blockers.append(("REGISTRATION_AND_SIGNING", "Offline checks cannot verify Duo App Store Connect record, App ID/capability registration, app groups, provisioning profiles, Firebase ownership, or signing readiness; none were created or queried here."))
+    blockers.append(("REGISTRATION_AND_SIGNING", "Offline checks cannot verify Duo App Store Connect record, App ID/capability registration, app groups, provisioning profiles, or signing readiness; none were created or queried here."))
     return blockers
 
 
@@ -342,9 +393,33 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="print validated identity overrides, one KEY=VALUE per line",
     )
+    parser.add_argument(
+        "--check-release-config",
+        action="store_true",
+        help="validate the opt-in unsigned Release simulator Firebase isolation config",
+    )
+    parser.add_argument(
+        "--emit-release-xcodebuild-overrides",
+        action="store_true",
+        help="print validated Release simulator overrides, one KEY=VALUE per line",
+    )
     args = parser.parse_args(argv)
     root = args.root.resolve()
     simulator_settings, simulator_errors = simulator_config_errors(root)
+    release_settings, release_errors = release_config_errors(root)
+    if args.check_release_config or args.emit_release_xcodebuild_overrides:
+        if release_errors:
+            for error in release_errors:
+                print(f"ERROR: {error}", file=sys.stderr)
+            return 1
+        if args.emit_release_xcodebuild_overrides:
+            print("\n".join(release_xcodebuild_overrides(release_settings)))
+        else:
+            print("PASS: Release app and Watch Firebase configuration is disabled for Duo")
+            print("PASS: upstream GoogleService-Info.plist resources are excluded")
+            print("PASS: Crashlytics code is compiled out and OSLog remains the app error reporter")
+            print("PASS: Release override is opt-in and excluded from standard XcodeGen specs")
+        return 0
     if args.check_simulator_config or args.emit_xcodebuild_overrides:
         if simulator_errors:
             for error in simulator_errors:
@@ -383,6 +458,8 @@ def main(argv: list[str] | None = None) -> int:
     print("PASS: current PM/Kit target configs resolve to the candidate bundle-ID matrix")
     print("PASS: code signing is disabled; no certificate/profile settings are present")
     print("PASS: explicit Debug simulator override is opt-in and Firebase-fail-closed")
+    if not release_errors:
+        print("PASS: explicit Release override excludes upstream Firebase config and disables Crashlytics")
     print(
         f"ASSUMPTION: DEVELOPMENT_TEAM={DEVELOPMENT_TEAM_ASSUMPTION} is verified for Sonarr only; "
         "confirm it for Bitwarden-Duo before using it."
