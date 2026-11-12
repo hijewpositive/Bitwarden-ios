@@ -5,6 +5,9 @@ import BitwardenKitMocks
 import BitwardenResources
 import BitwardenSdk
 import SwiftUI
+#if DEBUG
+import UIKit
+#endif
 import ViewInspector
 import ViewInspectorTestHelpers
 import XCTest
@@ -56,6 +59,162 @@ class VaultListViewTests: BitwardenTestCase { // swiftlint:disable:this type_bod
     }
 
     // MARK: Tests
+
+    // Hosted frame assertions use DEBUG-only geometry preferences, so they intentionally do not
+    // compile in Release. The structural ViewInspector tests below do not measure rendered frames.
+    #if DEBUG
+    /// Hosted Duo, compact, and wide viewports exercise the cap and keep content and controls in bounds.
+    @MainActor
+    func test_adaptiveLayout_hostedDuoCompactAndWideWidths_centerContentAndKeepControlsReachable() throws {
+        let item = VaultListItem.fixture()
+        processor.state.loadingState = .data([
+            VaultListSection(id: "synthetic-layout", items: [item], name: "Synthetic fixtures"),
+        ])
+
+        XCTAssertEqual(VaultListContentLayout.contentWidth(for: 669), 600)
+        XCTAssertEqual(VaultListContentLayout.contentWidth(for: 390), 390)
+        XCTAssertEqual(VaultListContentLayout.contentWidth(for: 1_024), 600)
+
+        let viewports: [(width: CGFloat, contentWidth: CGFloat, sideMargin: CGFloat)] = [
+            (width: 669, contentWidth: 600, sideMargin: 34.5),
+            (width: 390, contentWidth: 390, sideMargin: 0),
+            (width: 1_024, contentWidth: 600, sideMargin: 212),
+        ]
+        for viewport in viewports {
+            let width = viewport.width
+            let hostedLayout = makeHostedLayout(width: width)
+            defer { removeHostedLayout(hostedLayout) }
+
+            XCTAssertEqual(hostedLayout.controller.view.bounds.width, width, accuracy: 0.5)
+            waitFor(hostedLayout.frameRecorder.frames["VaultListPrimaryContent"] != nil)
+            let contentFrame = try XCTUnwrap(hostedLayout.frameRecorder.frames["VaultListPrimaryContent"])
+            let viewportFrame = try XCTUnwrap(hostedLayout.frameRecorder.frames["VaultListPrimaryContentViewport"])
+            let rowFrame = try XCTUnwrap(hostedLayout.frameRecorder.frames["VaultListItemRow"])
+            let addButtonFrame = try XCTUnwrap(hostedLayout.frameRecorder.frames["VaultListAddItemButton"])
+
+            XCTAssertEqual(
+                viewportFrame.width,
+                width,
+                accuracy: 0.5,
+                "Assertions must use the actual recorded viewport.",
+            )
+            XCTAssertEqual(contentFrame.width, viewport.contentWidth, accuracy: 0.5)
+            XCTAssertEqual(contentFrame.midX, viewportFrame.midX, accuracy: 0.5)
+            XCTAssertEqual(contentFrame.minX - viewportFrame.minX, viewport.sideMargin, accuracy: 0.5)
+            XCTAssertEqual(viewportFrame.maxX - contentFrame.maxX, viewport.sideMargin, accuracy: 0.5)
+            XCTAssertGreaterThanOrEqual(rowFrame.minX, contentFrame.minX - 1)
+            XCTAssertLessThanOrEqual(rowFrame.maxX, contentFrame.maxX + 1)
+            XCTAssertGreaterThanOrEqual(rowFrame.minY, viewportFrame.minY)
+            XCTAssertLessThanOrEqual(rowFrame.maxY, viewportFrame.maxY)
+            XCTAssertGreaterThanOrEqual(addButtonFrame.minX, contentFrame.minX - 1)
+            XCTAssertLessThanOrEqual(addButtonFrame.maxX, contentFrame.maxX + 1)
+            XCTAssertGreaterThanOrEqual(addButtonFrame.minY, viewportFrame.minY)
+            XCTAssertLessThanOrEqual(addButtonFrame.maxY, viewportFrame.maxY)
+            XCTAssertEqual(addButtonFrame.maxX, contentFrame.maxX, accuracy: 0.5)
+            if viewport.width > viewport.contentWidth {
+                XCTAssertLessThan(addButtonFrame.maxX, viewportFrame.maxX)
+            }
+
+            let content = try subject.inspect().find(viewWithAccessibilityIdentifier: "VaultListPrimaryContent")
+            XCTAssertNoThrow(try content.find(asyncButtonWithAccessibilityIdentifier: "VaultListItemRowButton"))
+            XCTAssertNoThrow(try content.find(viewWithAccessibilityIdentifier: "AddItemFloatingActionButton"))
+        }
+    }
+
+    /// Hosted search results retain the centered wide layout and keep a synthetic result row in bounds.
+    @MainActor
+    func test_adaptiveLayout_hostedSearchResults_centerContentAndKeepResultReachable() throws {
+        let item = VaultListItem.fixture()
+        processor.state.loadingState = .data([])
+        processor.state.searchText = "Synthetic search"
+        processor.state.searchResults = [item]
+
+        let hostedLayout = makeHostedLayout(width: 669)
+        defer { removeHostedLayout(hostedLayout) }
+        waitFor(hostedLayout.frameRecorder.frames["VaultListSearchContent"] != nil)
+
+        let viewportFrame = try XCTUnwrap(hostedLayout.frameRecorder.frames["VaultListSearchContentViewport"])
+        let contentFrame = try XCTUnwrap(hostedLayout.frameRecorder.frames["VaultListSearchContent"])
+        let resultFrame = try XCTUnwrap(hostedLayout.frameRecorder.frames["VaultListItemRow"])
+        XCTAssertEqual(viewportFrame.width, 669, accuracy: 0.5, "Assertions must use the actual recorded viewport.")
+        XCTAssertEqual(contentFrame.width, 600, accuracy: 0.5)
+        XCTAssertEqual(contentFrame.midX, viewportFrame.midX, accuracy: 0.5)
+        XCTAssertEqual(contentFrame.minX - viewportFrame.minX, 34.5, accuracy: 0.5)
+        XCTAssertEqual(viewportFrame.maxX - contentFrame.maxX, 34.5, accuracy: 0.5)
+        XCTAssertGreaterThanOrEqual(resultFrame.minX, contentFrame.minX - 1)
+        XCTAssertLessThanOrEqual(resultFrame.maxX, contentFrame.maxX + 1)
+        XCTAssertGreaterThanOrEqual(resultFrame.minY, viewportFrame.minY)
+        XCTAssertLessThanOrEqual(resultFrame.maxY, viewportFrame.maxY)
+
+        let content = try subject.inspect().find(viewWithAccessibilityIdentifier: "VaultListSearchContent")
+        XCTAssertNoThrow(try content.find(asyncButtonWithAccessibilityIdentifier: "VaultListItemRowButton"))
+    }
+
+    /// A wide hosted error state keeps its retry control inside the centered content column.
+    @MainActor
+    func test_adaptiveLayout_hostedErrorState_centerContentAndKeepRetryReachable() throws {
+        processor.state.loadingState = .error(errorMessage: "Synthetic sync error")
+
+        let hostedLayout = makeHostedLayout(width: 1_024)
+        defer { removeHostedLayout(hostedLayout) }
+        waitFor(hostedLayout.frameRecorder.frames["VaultListRetryButton"] != nil)
+
+        let viewportFrame = try XCTUnwrap(hostedLayout.frameRecorder.frames["VaultListPrimaryContentViewport"])
+        let contentFrame = try XCTUnwrap(hostedLayout.frameRecorder.frames["VaultListPrimaryContent"])
+        let retryFrame = try XCTUnwrap(hostedLayout.frameRecorder.frames["VaultListRetryButton"])
+        XCTAssertEqual(viewportFrame.width, 1_024, accuracy: 0.5)
+        XCTAssertEqual(contentFrame.width, 600, accuracy: 0.5)
+        XCTAssertEqual(contentFrame.midX, viewportFrame.midX, accuracy: 0.5)
+        XCTAssertEqual(contentFrame.minX - viewportFrame.minX, 212, accuracy: 0.5)
+        XCTAssertGreaterThanOrEqual(retryFrame.minX, contentFrame.minX - 1)
+        XCTAssertLessThanOrEqual(retryFrame.maxX, contentFrame.maxX + 1)
+        XCTAssertGreaterThanOrEqual(retryFrame.minY, viewportFrame.minY)
+        XCTAssertLessThanOrEqual(retryFrame.maxY, viewportFrame.maxY)
+
+        XCTAssertNoThrow(try subject.inspect().find(asyncButton: Localizations.tryAgain))
+    }
+    #endif
+
+    /// The empty primary vault state remains inside the adaptive content region.
+    @MainActor
+    func test_adaptiveLayout_emptyVault_usesPrimaryContentRegion() throws {
+        processor.state.loadingState = .data([])
+
+        let content = try subject.inspect().find(viewWithAccessibilityIdentifier: "VaultListPrimaryContent")
+        XCTAssertNoThrow(try content.find(button: Localizations.addLogin))
+    }
+
+    /// Populated vault rows and the add-item menu remain inside the adaptive content region.
+    @MainActor
+    func test_adaptiveLayout_populatedVault_keepsRowsAndAddMenu() throws {
+        processor.state.loadingState = .data([
+            VaultListSection(id: "1", items: [.fixture()], name: "Favorites"),
+        ])
+
+        let content = try subject.inspect().find(viewWithAccessibilityIdentifier: "VaultListPrimaryContent")
+        XCTAssertNoThrow(try content.find(asyncButtonWithAccessibilityIdentifier: "VaultListItemRowButton"))
+        XCTAssertNoThrow(try content.find(viewWithAccessibilityIdentifier: "AddItemFloatingActionButton"))
+    }
+
+    /// Search results use the adaptive search content region.
+    @MainActor
+    func test_adaptiveLayout_searchResults_useSearchContentRegion() throws {
+        processor.state.searchText = "Bitwarden"
+        processor.state.searchResults = [.fixture()]
+
+        let content = try subject.inspect().find(viewWithAccessibilityIdentifier: "VaultListSearchContent")
+        XCTAssertNoThrow(try content.find(asyncButtonWithAccessibilityIdentifier: "VaultListItemRowButton"))
+    }
+
+    /// The no-results state uses the same adaptive search content region.
+    @MainActor
+    func test_adaptiveLayout_noSearchResults_useSearchContentRegion() throws {
+        processor.state.searchText = "missing"
+        processor.state.searchResults = []
+
+        let content = try subject.inspect().find(viewWithAccessibilityIdentifier: "VaultListSearchContent")
+        XCTAssertNoThrow(try content.find(viewWithAccessibilityIdentifier: "NoSearchResultsLabel"))
+    }
 
     /// Tapping the add the new login button dispatches the `.addItemPressed` action.
     @MainActor
@@ -414,4 +573,71 @@ class VaultListViewTests: BitwardenTestCase { // swiftlint:disable:this type_bod
         try await button.tap()
         XCTAssertEqual(processor.effects.last, .morePressed(item))
     }
+
+#if DEBUG
+    @MainActor
+    private func makeHostedLayout(width: CGFloat) -> HostedVaultListLayout {
+        let viewportSize = CGSize(width: width, height: 1_000)
+        let frameRecorder = VaultListLayoutFrameRecorder()
+        let controller = UIHostingController(
+            rootView: VaultListLayoutTestHost(subject: subject, frameRecorder: frameRecorder),
+        )
+        let viewportFrame = CGRect(origin: .zero, size: viewportSize)
+        let windowScene = UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .first(where: { $0.activationState == .foregroundActive })
+        let window: UIWindow
+        if let windowScene {
+            window = UIWindow(windowScene: windowScene)
+        } else {
+            window = UIWindow(frame: viewportFrame)
+        }
+        window.frame = viewportFrame
+        window.rootViewController = controller
+        window.makeKeyAndVisible()
+
+        controller.view.frame = viewportFrame
+        controller.view.setNeedsLayout()
+        window.setNeedsLayout()
+        window.layoutIfNeeded()
+        controller.view.layoutIfNeeded()
+
+        return HostedVaultListLayout(window: window, controller: controller, frameRecorder: frameRecorder)
+    }
+
+    @MainActor
+    private func removeHostedLayout(_ hostedLayout: HostedVaultListLayout) {
+        hostedLayout.window.isHidden = true
+        hostedLayout.window.rootViewController = nil
+    }
+#endif
 }
+
+#if DEBUG
+@MainActor
+private final class VaultListLayoutFrameRecorder {
+    var frames: [String: CGRect] = [:]
+}
+
+@MainActor
+private struct VaultListLayoutTestHost: View {
+    let subject: VaultListView
+    let frameRecorder: VaultListLayoutFrameRecorder
+
+    var body: some View {
+        subject
+            .coordinateSpace(name: VaultListLayoutFramePreferenceKey.coordinateSpaceName)
+            .onPreferenceChange(VaultListLayoutFramePreferenceKey.self) { frames in
+                frameRecorder.frames = frames
+            }
+            .ignoresSafeArea(.container, edges: .horizontal)
+    }
+}
+
+@MainActor
+private struct HostedVaultListLayout {
+    let window: UIWindow
+    let controller: UIHostingController<VaultListLayoutTestHost>
+    let frameRecorder: VaultListLayoutFrameRecorder
+}
+#endif

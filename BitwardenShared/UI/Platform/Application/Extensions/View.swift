@@ -79,7 +79,7 @@ extension View {
         .padding([.trailing, .bottom], 16)
     }
 
-    /// Returns a floating action menu positioned at the bottom-right corner of the screen.
+    /// Returns a floating action menu positioned at the bottom-right corner of its containing view.
     ///
     /// - Parameters:
     ///   - hidden: Whether the menu button should be hidden.

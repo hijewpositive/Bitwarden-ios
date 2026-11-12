@@ -37,11 +37,15 @@ private struct SearchableVaultListView: View {
                 || !store.state.searchText.isEmpty
                 || !store.state.searchResults.isEmpty
 
-            vault
-                .hidden(isSearching)
+            adaptiveContent(accessibilityIdentifier: "VaultListPrimaryContent") {
+                vault
+            }
+            .hidden(isSearching)
 
-            search
-                .hidden(!isSearching)
+            adaptiveContent(accessibilityIdentifier: "VaultListSearchContent") {
+                search
+            }
+            .hidden(!isSearching)
         }
         .animation(.easeInOut, value: store.state.organizationUserNotificationBannerData)
         .background(SharedAsset.Colors.backgroundPrimary.swiftUIColor.ignoresSafeArea())
@@ -166,6 +170,7 @@ private struct SearchableVaultListView: View {
             errorViewWithRetry(errorMessage: errorMessage)
         }
         .overlay(alignment: .bottomTrailing) {
+            // Keep the add menu attached to the capped column instead of the wide viewport edge.
             addVaultItemFloatingActionMenu(
                 availableItemTypes: store.state.itemTypesUserCanCreate,
             ) { type in
@@ -173,6 +178,7 @@ private struct SearchableVaultListView: View {
             } addFolder: {
                 store.send(.addFolder)
             }
+            .vaultListLayoutFrame("VaultListAddItemButton")
         }
     }
 
@@ -219,6 +225,7 @@ private struct SearchableVaultListView: View {
                     shouldFillWidth: false,
                 ),
             )
+            .vaultListLayoutFrame("VaultListRetryButton")
         }
         .scrollView(centerContentVertically: true)
     }
@@ -249,6 +256,25 @@ private struct SearchableVaultListView: View {
         }
         .padding(.bottom, FloatingActionButton.bottomOffsetPadding)
         .scrollView()
+    }
+
+    /// Creates a centered content region that keeps all vault surfaces at a readable width.
+    private func adaptiveContent<Content: View>(
+        accessibilityIdentifier: String,
+        @ViewBuilder content: @escaping () -> Content,
+    ) -> some View {
+        GeometryReader { geometry in
+            content()
+                .frame(width: VaultListContentLayout.contentWidth(for: geometry.size.width))
+                .vaultListLayoutFrame(accessibilityIdentifier)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .overlay {
+                    Color.clear
+                        .vaultListLayoutFrame("\(accessibilityIdentifier)Viewport")
+                        .allowsHitTesting(false)
+                }
+        }
+        .accessibilityIdentifier(accessibilityIdentifier)
     }
 
     /// Creates a row in the list for the provided item.
@@ -290,6 +316,7 @@ private struct SearchableVaultListView: View {
             ),
             timeProvider: timeProvider,
         )
+        .vaultListLayoutFrame("VaultListItemRow")
     }
 }
 
