@@ -1,0 +1,8 @@
+#include "Bitwarden-Duo.xcconfig.example"
+
+// Opt-in override for unsigned iOS Simulator builds only. The normal XcodeGen
+// project never includes Configs-fork; the build helper passes this file explicitly.
+// The helper also emits this exclusion as a command-line build setting so target
+// xcconfigs cannot re-enable the resource. The post-build scan covers embedded Watch.
+// Debug code paths use OSLogErrorReporter and skip FirebaseApp.configure().
+EXCLUDED_SOURCE_FILE_NAMES = GoogleService-Info.plist

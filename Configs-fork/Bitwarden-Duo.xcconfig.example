@@ -1,0 +1,12 @@
+// Bitwarden-Duo candidate identity only. This file is deliberately NOT included by XcodeGen.
+// Do not rename/copy it to Configs/Local-bwpm.xcconfig: that override changes the standard app.
+// This remains opt-in: Bitwarden-Duo-Simulator.xcconfig includes it only for Debug Simulator builds.
+// Assumption pending Simon's confirmation: NGYQ8H5H97 is verified for Sonarr, not Bitwarden-Duo.
+// The local development identity 4WW5494JT3 is distinct and is not the App Store team candidate.
+CODE_SIGNING_ALLOWED = NO
+CODE_SIGNING_REQUIRED = NO
+DEVELOPMENT_TEAM = NGYQ8H5H97
+ORGANIZATION_IDENTIFIER = com.sputnicity
+BASE_BUNDLE_ID = com.sputnicity.bitwarden-duo
+SHARED_APP_GROUP_IDENTIFIER = group.com.sputnicity.bitwarden-duo.authenticator
+BMPW_BUNDLE_DISPLAY_NAME = Bitwarden-Duo

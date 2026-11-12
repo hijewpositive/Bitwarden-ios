@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+# Restricted Mint-compatible dispatcher for the Bitwarden-Duo simulator build.
+# It only executes already-installed binaries; it never installs or updates tools.
+set -euo pipefail
+
+if [[ "${1:-}" != "run" || $# -lt 2 ]]; then
+    echo "error: offline mint shim accepts only 'mint run <cached-tool> ...'" >&2
+    exit 64
+fi
+shift
+package="${1%%@*}"
+shift
+
+case "$package" in
+    LicensePlist|mono0926/LicensePlist)
+        executable="license-plist"
+        if [[ "${1:-}" == "license-plist" ]]; then shift; fi
+        ;;
+    sourcery|krzysztofzablocki/Sourcery)
+        executable="sourcery"
+        ;;
+    swiftgen|SwiftGen/SwiftGen)
+        executable="swiftgen"
+        ;;
+    *)
+        echo "error: tool '$package' is not allowed in the offline fork build" >&2
+        exit 64
+        ;;
+esac
+
+bin_dir="${BITWARDEN_DUO_MINT_BIN_DIR:-${MINT_PATH:-$HOME/.mint}/bin}"
+tool="$bin_dir/$executable"
+if [[ ! -x "$tool" ]]; then
+    echo "error: cached tool is missing: $tool (no network install attempted)" >&2
+    exit 69
+fi
+exec "$tool" "$@"
