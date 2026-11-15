@@ -434,8 +434,8 @@ def main(argv: list[str] | None = None) -> int:
             print("PASS: Debug app/Watch code paths do not configure Firebase")
             print("PASS: override is opt-in and not included by the standard XcodeGen project")
             print(
-                f"ASSUMPTION: DEVELOPMENT_TEAM={DEVELOPMENT_TEAM_ASSUMPTION} is verified for Sonarr only; "
-                "confirm it for Bitwarden-Duo before using it."
+                f"HISTORICAL: DEVELOPMENT_TEAM={DEVELOPMENT_TEAM_ASSUMPTION} matched Duo App Store Connect bundle records on 2026-11-15; "
+                "this offline check is not live verification of registration, capabilities, or signing."
             )
         return 0
 
@@ -461,8 +461,8 @@ def main(argv: list[str] | None = None) -> int:
     if not release_errors:
         print("PASS: explicit Release override excludes upstream Firebase config and disables Crashlytics")
     print(
-        f"ASSUMPTION: DEVELOPMENT_TEAM={DEVELOPMENT_TEAM_ASSUMPTION} is verified for Sonarr only; "
-        "confirm it for Bitwarden-Duo before using it."
+        f"HISTORICAL: DEVELOPMENT_TEAM={DEVELOPMENT_TEAM_ASSUMPTION} matched Duo App Store Connect bundle records on 2026-11-15; "
+        "this offline check is not live verification of registration, capabilities, or signing."
     )
     for name, bundle_id in ids.items():
         print(f"  {name}: {bundle_id}")

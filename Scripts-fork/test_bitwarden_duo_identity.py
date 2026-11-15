@@ -53,6 +53,11 @@ class BitwardenDuoIdentityTests(unittest.TestCase):
         self.assertIn("pending Simon's confirmation", docs)
         self.assertIn("4WW5494JT3", docs)
 
+    def test_validator_does_not_claim_duo_team_is_sonarr_only(self) -> None:
+        run = subprocess.run([sys.executable, str(SCRIPT_DIR / "validate_bitwarden_duo_identity.py"), "--check-simulator-config"], text=True, capture_output=True, check=True)
+        self.assertNotIn("verified for Sonarr only", run.stdout)
+        self.assertIn("not live verification", run.stdout)
+
     def test_simulator_override_is_explicit_unsigned_and_fail_closed(self) -> None:
         settings, errors = validator.simulator_config_errors(ROOT)
         self.assertEqual(errors, [])
