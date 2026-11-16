@@ -44,6 +44,41 @@ class VaultGroupViewTests: BitwardenTestCase {
 
     // MARK: Tests
 
+    /// Populated group items and the floating action button remain in the adaptive column.
+    @MainActor
+    func test_adaptiveLayout_populatedGroup_keepsItemAndAddButton() throws {
+        let item = VaultListItem.fixture(cipherListView: .fixture(name: "Synthetic Item"))
+        processor.state.loadingState = .data([VaultListSection(id: "items", items: [item], name: "Items")])
+
+        let content = try subject.inspect().find(viewWithAccessibilityIdentifier: "VaultGroupContent")
+        XCTAssertNoThrow(try content.find(asyncButton: "Synthetic Item"))
+        XCTAssertNoThrow(try content.find(floatingActionButtonWithAccessibilityIdentifier: "AddItemFloatingActionButton"))
+    }
+
+    /// Empty groups retain their add action inside the adaptive column.
+    @MainActor
+    func test_adaptiveLayout_emptyGroup_keepsAddAction() throws {
+        processor.state.loadingState = .data([])
+
+        let content = try subject.inspect().find(viewWithAccessibilityIdentifier: "VaultGroupContent")
+        XCTAssertNoThrow(try content.find(button: Localizations.addLogin))
+    }
+
+    /// Search results and no-results content share the group's adaptive column.
+    @MainActor
+    func test_adaptiveLayout_groupSearch_keepsResultsAndNoResults() throws {
+        processor.state.isSearching = true
+        processor.state.searchText = "Synthetic"
+        processor.state.searchResults = [.fixture(cipherListView: .fixture(name: "Synthetic Item"))]
+
+        var content = try subject.inspect().find(viewWithAccessibilityIdentifier: "VaultGroupContent")
+        XCTAssertNoThrow(try content.find(asyncButton: "Synthetic Item"))
+
+        processor.state.searchResults = []
+        content = try subject.inspect().find(viewWithAccessibilityIdentifier: "VaultGroupContent")
+        XCTAssertNoThrow(try content.find(viewWithAccessibilityIdentifier: "NoSearchResultsLabel"))
+    }
+
     /// Tapping the add item button dispatches the `.addItemPressed` action.
     @MainActor
     func test_addItemEmptyStateButton_tap() throws {

@@ -1,3 +1,8 @@
+## Adaptive group-width handoff — 2026-11-15
+
+- Extended the existing adaptive main-vault width policy to vault group screens (including folders and item types). Populated, empty, and search/no-results surfaces use a centered column, and the group's floating add control stays attached to that column. Compact widths remain edge-to-edge; wide widths use the existing 600-point cap. Navigation/search chrome and toast remain outside the column; no identity, entitlement, signing, or network behavior was changed.
+- Added three synthetic ViewInspector cases for group content, empty, search, and no-results hierarchy. They have **not** been run or typechecked in the iOS test bundle. Swift frontend syntax parsing passed for the changed production and test files in Debug and Release. The unmodified production width policy executed on the Mac for six compact/boundary/wide inputs; simulator rendering, VoiceOver, interaction, Dynamic Type, and actual Duo posture changes have not been verified. Next run the new ViewInspector tests and hosted rendered-frame coverage on a compatible simulator using the shared build lock and audio safety checks. Verify scrolling, add control placement and taps, search transitions, narrow split view and compact-to-wide resizing with disposable fixtures.
+
 ## Adaptive width regression handoff — 2026-11-15
 
 - Added co-located `VaultListContentLayoutTests.swift` covering eight compact/cap/wide boundary values, monotonic and bounded outputs for whole-point widths 0–2,000, and a compact → wide → compact sequence. These test the width policy only; they do not render a view, simulate folding, or verify controls, accessibility, or scrolling.

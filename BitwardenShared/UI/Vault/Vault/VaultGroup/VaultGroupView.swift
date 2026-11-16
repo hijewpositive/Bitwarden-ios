@@ -71,23 +71,35 @@ struct VaultGroupView: View {
         }
     }
 
+    /// Keeps group, empty, and search surfaces aligned with the adaptive main vault column.
     @ViewBuilder private var content: some View {
-        searchOrGroup
-            .onChange(of: store.state.url) { newValue in
-                guard let url = newValue else { return }
-                openURL(url)
-                store.send(.clearURL)
-            }
-            .searchDebouncedTask(id: store.state.searchText) {
-                await store.perform(.search(store.state.searchText))
-            }
-            .task {
-                await store.perform(.search(store.state.searchText))
-            }
-            .onChange(of: store.state.searchVaultFilterType) { _ in
-                Task { await store.perform(.search(store.state.searchText)) }
-            }
-            .animation(.default, value: store.state.isSearching)
+        GeometryReader { geometry in
+            searchOrGroup
+                .frame(width: VaultListContentLayout.contentWidth(for: geometry.size.width))
+                .vaultListLayoutFrame("VaultGroupContent")
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .overlay {
+                    Color.clear
+                        .vaultListLayoutFrame("VaultGroupViewport")
+                        .allowsHitTesting(false)
+                }
+        }
+        .accessibilityIdentifier("VaultGroupContent")
+        .onChange(of: store.state.url) { newValue in
+            guard let url = newValue else { return }
+            openURL(url)
+            store.send(.clearURL)
+        }
+        .searchDebouncedTask(id: store.state.searchText) {
+            await store.perform(.search(store.state.searchText))
+        }
+        .task {
+            await store.perform(.search(store.state.searchText))
+        }
+        .onChange(of: store.state.searchVaultFilterType) { _ in
+            Task { await store.perform(.search(store.state.searchText)) }
+        }
+        .animation(.default, value: store.state.isSearching)
     }
 
     /// A view that displays an empty state for this vault group.
