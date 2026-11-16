@@ -135,6 +135,17 @@ class AuthServiceTests: BitwardenTestCase { // swiftlint:disable:this type_body_
         XCTAssertFalse(AuthWebSessionCallbackKind.webAuthnSelfHosted.supportsHttpsCallback)
     }
 
+    /// The Duo fork lacks a checked cloud domain association and uses the legacy session callback.
+    /// The upstream identities and unrelated apps keep their existing HTTPS behavior.
+    func test_authWebSessionCallbackPolicy_forkAndUpstream() {
+        XCTAssertFalse(AuthWebSessionCallbackPolicy.permitsHttpsCallback(
+            bundleIdentifier: "com.sputnicity.bitwarden-duo",
+        ))
+        XCTAssertTrue(AuthWebSessionCallbackPolicy.permitsHttpsCallback(bundleIdentifier: "com.8bit.bitwarden"))
+        XCTAssertTrue(AuthWebSessionCallbackPolicy.permitsHttpsCallback(bundleIdentifier: "com.8bit.bitwarden.beta"))
+        XCTAssertTrue(AuthWebSessionCallbackPolicy.permitsHttpsCallback(bundleIdentifier: nil))
+    }
+
     /// `callbackUrlScheme` has the expected value.
     func test_callbackUrlScheme() {
         XCTAssertEqual(subject.callbackUrlScheme, "bitwarden")
@@ -288,7 +299,8 @@ class AuthServiceTests: BitwardenTestCase { // swiftlint:disable:this type_body_
 
         let redirectUri = URLComponents(url: result.url, resolvingAgainstBaseURL: false)?
             .queryItems?.first { $0.name == "redirect_uri" }?.value
-        if #available(iOS 17.4, *) {
+        if #available(iOS 17.4, *),
+           AuthWebSessionCallbackPolicy.permitsHttpsCallback(bundleIdentifier: Bundle.main.bundleIdentifier) {
             XCTAssertEqual(redirectUri, "https://bitwarden.com/sso-callback")
         } else {
             XCTAssertEqual(redirectUri, "bitwarden://sso-callback")
@@ -307,7 +319,8 @@ class AuthServiceTests: BitwardenTestCase { // swiftlint:disable:this type_body_
 
         let redirectUri = URLComponents(url: result.url, resolvingAgainstBaseURL: false)?
             .queryItems?.first { $0.name == "redirect_uri" }?.value
-        if #available(iOS 17.4, *) {
+        if #available(iOS 17.4, *),
+           AuthWebSessionCallbackPolicy.permitsHttpsCallback(bundleIdentifier: Bundle.main.bundleIdentifier) {
             XCTAssertEqual(redirectUri, "https://bitwarden.eu/sso-callback")
         } else {
             XCTAssertEqual(redirectUri, "bitwarden://sso-callback")
@@ -326,7 +339,8 @@ class AuthServiceTests: BitwardenTestCase { // swiftlint:disable:this type_body_
 
         let redirectUri = URLComponents(url: result.url, resolvingAgainstBaseURL: false)?
             .queryItems?.first { $0.name == "redirect_uri" }?.value
-        if #available(iOS 17.4, *) {
+        if #available(iOS 17.4, *),
+           AuthWebSessionCallbackPolicy.permitsHttpsCallback(bundleIdentifier: Bundle.main.bundleIdentifier) {
             XCTAssertEqual(redirectUri, "https://bitwarden.pw/sso-callback")
         } else {
             XCTAssertEqual(redirectUri, "bitwarden://sso-callback")

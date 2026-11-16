@@ -55,6 +55,17 @@ enum AuthError: Error {
     case unableToResendNewDeviceOtp
 }
 
+// MARK: - AuthWebSessionCallbackPolicy
+
+/// Cloud HTTPS callbacks require the host to associate the calling app's identity. The Duo fork
+/// isn't listed by the checked Bitwarden domains, so it uses the legacy session callback.
+/// This does not change general URL routing or the upstream app's callback policy.
+enum AuthWebSessionCallbackPolicy {
+    static func permitsHttpsCallback(bundleIdentifier: String?) -> Bool {
+        bundleIdentifier != "com.sputnicity.bitwarden-duo"
+    }
+}
+
 // MARK: - AuthWebSessionCallback
 
 /// How an `ASWebAuthenticationSession` should match the redirect that ends an auth connector flow.
@@ -362,9 +373,9 @@ class DefaultAuthService: AuthService { // swiftlint:disable:this type_body_leng
     /// The request model to resend the email with the new device verification code.
     private var resendNewDeviceOtpModel: ResendNewDeviceOtpRequestModel?
 
-    /// The single sign on callback url for this application. Resolves to an HTTPS URL for Cloud
-    /// users on iOS 17.4+, otherwise the `bitwarden://` custom scheme. Must stay in sync with
-    /// the callback the `ASWebAuthenticationSession` is configured to match.
+    /// The single sign on callback URL. Cloud uses HTTPS on iOS 17.4+ when the app identity is
+    /// eligible; the Duo fork and older or self-hosted environments use `bitwarden://`. Must stay
+    /// in sync with the callback the `ASWebAuthenticationSession` is configured to match.
     private var singleSignOnCallbackUrl: String { callbackUrl(for: .singleSignOn) }
 
     /// The master password policy captured from the identity token response during an SSO/TDE
@@ -403,11 +414,12 @@ class DefaultAuthService: AuthService { // swiftlint:disable:this type_body_leng
         supportsHttpsAuthCallback ? "https" : callbackUrlScheme
     }
 
-    /// Whether the current environment and OS support the HTTPS auth connector callback — Cloud
-    /// regions (those exposing an `authCallbackHost`) on iOS 17.4+.
+    /// Whether the environment, OS, and app identity support the HTTPS connector callback.
+    /// Cloud HTTPS requires iOS 17.4+ and an eligible app identity.
     private var supportsHttpsAuthCallback: Bool {
         guard #available(iOS 17.4, *) else { return false }
         return environmentService.region.authCallbackHost != nil
+            && AuthWebSessionCallbackPolicy.permitsHttpsCallback(bundleIdentifier: Bundle.main.bundleIdentifier)
     }
 
     // MARK: Initialization
@@ -1139,8 +1151,8 @@ class DefaultAuthService: AuthService { // swiftlint:disable:this type_body_leng
     /// the active environment region, and OS availability of the HTTPS callback API.
     ///
     /// - Parameter kind: The connector flow the session is for.
-    /// - Returns: An HTTPS callback for Cloud users on iOS 17.4+ (SSO and Duo only), otherwise the
-    ///   `bitwarden://` custom scheme.
+    /// - Returns: An HTTPS callback for eligible Cloud users on iOS 17.4+ (SSO and Duo only),
+    ///   otherwise the `bitwarden://` custom scheme.
     ///
     private func resolveCallback(for kind: AuthWebSessionCallbackKind) -> AuthWebSessionCallback {
         guard kind.supportsHttpsCallback,
