@@ -37,6 +37,42 @@ class VaultAutofillListViewTests: BitwardenTestCase {
 
     // MARK: Tests
 
+    /// A synthetic result remains selectable inside the adaptive AutoFill column.
+    @MainActor
+    func test_adaptiveLayout_itemSelection_keepsRowAndSelectionEffect() async throws {
+        let item = VaultListItem.fixture(cipherListView: .fixture(name: "Synthetic Item"))
+        processor.state.loadingState = .data([VaultListSection(id: "items", items: [item], name: "Items")])
+        let content = try subject.inspect().find(viewWithAccessibilityIdentifier: "VaultAutofillContent")
+        let row = try content.find(asyncButtonWithAccessibilityIdentifier: "VaultListItemRowButton")
+        try await row.tap()
+        XCTAssertEqual(processor.effects.last, .vaultItemTapped(item))
+    }
+
+    /// Search results and the no-results message remain in the same adaptive AutoFill column.
+    @MainActor
+    func test_adaptiveLayout_search_keepsResultsAndNoResults() throws {
+        let item = VaultListItem.fixture(cipherListView: .fixture(name: "Synthetic Result"))
+        processor.state.searchText = "Synthetic"
+        processor.state.ciphersForSearch = [VaultListSection(id: "search", items: [item], name: "Items")]
+        var content = try subject.inspect().find(viewWithAccessibilityIdentifier: "VaultAutofillContent")
+        XCTAssertNoThrow(try content.find(asyncButton: "Synthetic Result"))
+
+        processor.state.ciphersForSearch = []
+        processor.state.showNoResults = true
+        content = try subject.inspect().find(viewWithAccessibilityIdentifier: "VaultAutofillContent")
+        XCTAssertNoThrow(try content.find(viewWithAccessibilityIdentifier: "NoSearchResultsLabel"))
+    }
+
+    /// An empty AutoFill state keeps its existing add action in the column.
+    @MainActor
+    func test_adaptiveLayout_emptyState_keepsAddAction() throws {
+        processor.state.loadingState = .data([])
+        let content = try subject.inspect().find(viewWithAccessibilityIdentifier: "VaultAutofillContent")
+        let button = try content.find(button: Localizations.addItem)
+        try button.tap()
+        XCTAssertEqual(processor.dispatchedActions.last, .addTapped(fromFAB: false))
+    }
+
     /// Tapping the add item floating action button dispatches the `.addItemPressed` action.`
     @MainActor
     func test_addItemFloatingActionButton_tap() async throws {

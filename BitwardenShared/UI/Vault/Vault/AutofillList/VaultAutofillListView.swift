@@ -371,30 +371,36 @@ private struct VaultAutofillListSearchableView: View {
     /// The content displayed in the view.
     @ViewBuilder
     private func contentView() -> some View {
-        ZStack {
-            let isSearching = isSearching
-                || !store.state.searchText.isEmpty
-                || !store.state.ciphersForSearch.isEmpty
+        GeometryReader { geometry in
+            ZStack {
+                let isSearching = isSearching
+                    || !store.state.searchText.isEmpty
+                    || !store.state.ciphersForSearch.isEmpty
 
-            LoadingView(state: store.state.loadingState) { sections in
-                if sections.isEmpty {
-                    emptyView()
-                } else {
-                    cipherListView(sections)
+                LoadingView(state: store.state.loadingState) { sections in
+                    if sections.isEmpty {
+                        emptyView()
+                    } else {
+                        cipherListView(sections)
+                    }
+                } errorView: { errorMessage in
+                    errorViewWithRetry(errorMessage: errorMessage)
                 }
-            } errorView: { errorMessage in
-                errorViewWithRetry(errorMessage: errorMessage)
-            }
-            .overlay(alignment: .bottomTrailing) {
-                addItemFloatingActionButton(hidden: !store.state.showAddItemButton) {
-                    store.send(.addTapped(fromFAB: true))
+                .overlay(alignment: .bottomTrailing) {
+                    addItemFloatingActionButton(hidden: !store.state.showAddItemButton) {
+                        store.send(.addTapped(fromFAB: true))
+                    }
                 }
-            }
-            .hidden(isSearching)
+                .hidden(isSearching)
 
-            searchContentView()
-                .hidden(!isSearching)
+                searchContentView()
+                    .hidden(!isSearching)
+            }
+            .frame(width: VaultListContentLayout.contentWidth(for: geometry.size.width))
+            .vaultListLayoutFrame("VaultAutofillContent")
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
+        .accessibilityIdentifier("VaultAutofillContent")
         .background(SharedAsset.Colors.backgroundPrimary.swiftUIColor.ignoresSafeArea())
     }
 
