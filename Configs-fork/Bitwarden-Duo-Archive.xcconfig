@@ -1,0 +1,6 @@
+// Opt-in fork-only archive identity for the verified Bitwarden-Duo Apple team.
+// Unsigned iOS archives do not infer AppIdentifierPrefix from a provisioning profile.
+// This verified prefix must match the final App Store profile and signed entitlements;
+// do not reuse this config for a different team or app-identifier prefix.
+#include "Bitwarden-Duo-Release.xcconfig"
+AppIdentifierPrefix = NGYQ8H5H97.

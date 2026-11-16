@@ -60,6 +60,10 @@ def audit_report(report: dict) -> list[str]:
                 errors.append(f'{bundle_id}: profileGroups must include {needed!r}, got {granted!r}')
         if bundle_id in {BASE, BASE+'.autofill', BASE+'.share-extension', BASE+'.find-login-action-extension'}:
             contain(KEYCHAINS, [KEYCHAIN])
+            runtime_group = item.get('runtimeKeychainAccessGroup')
+            allowed_keychains = ent.get(KEYCHAINS)
+            if runtime_group != KEYCHAIN or not isinstance(allowed_keychains, list) or runtime_group not in allowed_keychains:
+                errors.append(f'{bundle_id}: runtimeKeychainAccessGroup must equal signed {KEYCHAIN!r}, got {runtime_group!r}')
         if bundle_id in {BASE, BASE+'.autofill'}:
             require(AUTOFILL, True)
         if bundle_id == BASE:

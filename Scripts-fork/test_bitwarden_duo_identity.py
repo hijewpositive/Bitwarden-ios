@@ -72,6 +72,14 @@ class BitwardenDuoIdentityTests(unittest.TestCase):
         self.assertIn("EXCLUDED_SOURCE_FILE_NAMES=GoogleService-Info.plist", overrides)
         self.assertNotIn("PROVISIONING_PROFILE_SPECIFIER=", "\n".join(overrides))
 
+    def test_archive_config_sets_verified_fork_keychain_prefix_without_wiring_upstream(self) -> None:
+        settings = validator.parse_xcconfig(ROOT / "Configs-fork/Bitwarden-Duo-Archive.xcconfig")
+        self.assertEqual(settings["DEVELOPMENT_TEAM"], "NGYQ8H5H97")
+        self.assertEqual(settings["AppIdentifierPrefix"], "NGYQ8H5H97.")
+        self.assertEqual(settings["CODE_SIGNING_ALLOWED"], "NO")
+        for project in ("project-pm.yml", "project-bwk.yml"):
+            self.assertNotIn("Configs-fork/Bitwarden-Duo-Archive.xcconfig", (ROOT / project).read_text())
+
     def test_release_override_is_fork_only_and_disables_firebase_fail_closed(self) -> None:
         settings, errors = validator.release_config_errors(ROOT)
         self.assertEqual(errors, [])

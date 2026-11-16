@@ -30,6 +30,7 @@ class SignedEntitlementAuditTests(unittest.TestCase):
                 ent[audit.GROUPS] = list(profile_groups)
             if suffix in ("", ".autofill", ".share-extension", ".find-login-action-extension"):
                 ent[audit.KEYCHAINS] = [audit.KEYCHAIN]
+                item["runtimeKeychainAccessGroup"] = audit.KEYCHAIN
             if suffix in ("", ".autofill"):
                 ent[audit.AUTOFILL] = True
             if not suffix:
@@ -39,6 +40,29 @@ class SignedEntitlementAuditTests(unittest.TestCase):
         self.assertEqual(audit.audit_report({"bundles": bundles}), [])
         del bundles[1]["signedEntitlements"][audit.GROUPS]
         self.assertTrue(any(audit.GROUPS in e for e in audit.audit_report({"bundles": bundles})))
+
+    def test_runtime_keychain_group_must_match_signed_entitlement(self):
+        bundle = {
+            "bundleId": audit.BASE,
+            "signedEntitlements": {
+                "application-identifier": audit.TEAM + "." + audit.BASE,
+                audit.KEYCHAINS: [audit.KEYCHAIN],
+            },
+            "runtimeKeychainAccessGroup": audit.BASE,
+        }
+        errors = audit.audit_report({"bundles": [bundle]})
+        self.assertTrue(any("runtimeKeychainAccessGroup" in e for e in errors), errors)
+
+    def test_runtime_keychain_group_missing_or_malformed_fails_closed(self):
+        for runtime_group, signed_groups in ((None, [audit.KEYCHAIN]), (audit.KEYCHAIN, None)):
+            with self.subTest(runtime_group=runtime_group, signed_groups=signed_groups):
+                bundle = {
+                    "bundleId": audit.BASE,
+                    "signedEntitlements": {audit.KEYCHAINS: signed_groups},
+                    "runtimeKeychainAccessGroup": runtime_group,
+                }
+                errors = audit.audit_report({"bundles": [bundle]})
+                self.assertTrue(any("runtimeKeychainAccessGroup" in e for e in errors), errors)
 
     def test_rejects_duplicate_or_missing_bundle_ids(self):
         bundle = {"bundleId": audit.BASE, "signedEntitlements": {}}
