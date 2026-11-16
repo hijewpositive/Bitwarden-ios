@@ -2,6 +2,10 @@
 import BitwardenKit
 import BitwardenKitMocks
 import BitwardenResources
+#if DEBUG
+import SwiftUI
+import UIKit
+#endif
 import ViewInspector
 import XCTest
 
@@ -36,6 +40,35 @@ class VaultAutofillListViewTests: BitwardenTestCase {
     }
 
     // MARK: Tests
+
+    #if DEBUG
+    /// Measure actual AutoFill viewport, content, row and add control at compact, Duo and wide sizes.
+    @MainActor
+    func test_adaptiveLayout_hostedViewportAndControls() throws {
+        let item = VaultListItem.fixture(cipherListView: .fixture(name: "Synthetic Item"))
+        processor.state.loadingState = .data([VaultListSection(id: "items", items: [item], name: "Items")])
+        for (width, expected) in [(CGFloat(390), CGFloat(390)), (669, 600), (1_024, 600)] {
+            let host = makeHostedLayout(width: width)
+            defer { removeHostedLayout(host) }
+            waitFor(host.recorder.frames["VaultAutofillAddButton"] != nil)
+            try assertHostedFrames(host, viewportWidth: width, contentWidth: expected, hasAddButton: true)
+        }
+    }
+
+    /// Search transition retains the measured content cap and keeps the result within the viewport.
+    @MainActor
+    func test_adaptiveLayout_hostedSearchTransition() throws {
+        let item = VaultListItem.fixture(cipherListView: .fixture(name: "Synthetic Result"))
+        processor.state.loadingState = .data([])
+        let host = makeHostedLayout(width: 669)
+        defer { removeHostedLayout(host) }
+        waitFor(host.recorder.frames["VaultAutofillContent"] != nil)
+        processor.state.ciphersForSearch = [VaultListSection(id: "search", items: [item], name: "Items")]
+        processor.state.searchText = "Synthetic"
+        waitFor(host.recorder.frames["VaultAutofillItemRow"] != nil)
+        try assertHostedFrames(host, viewportWidth: 669, contentWidth: 600, hasAddButton: false)
+    }
+    #endif
 
     /// A synthetic result remains selectable inside the adaptive AutoFill column.
     @MainActor
@@ -122,4 +155,93 @@ class VaultAutofillListViewTests: BitwardenTestCase {
         try await button.tap()
         XCTAssertEqual(processor.effects.last, .vaultItemTapped(item))
     }
+
+    #if DEBUG
+    @MainActor
+    private func makeHostedLayout(width: CGFloat) -> HostedAutofillLayout {
+        let frame = CGRect(x: 0, y: 0, width: width, height: 1_000)
+        let recorder = AutofillFrameRecorder()
+        let controller = UIHostingController(rootView: AutofillLayoutTestHost(subject: subject, recorder: recorder))
+        let scene = UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .first(where: { $0.activationState == .foregroundActive })
+        let window = scene.map { UIWindow(windowScene: $0) } ?? UIWindow(frame: frame)
+        window.frame = frame
+        window.rootViewController = controller
+        window.makeKeyAndVisible()
+        controller.view.frame = frame
+        controller.view.setNeedsLayout()
+        window.setNeedsLayout()
+        window.layoutIfNeeded()
+        controller.view.layoutIfNeeded()
+        return HostedAutofillLayout(window: window, controller: controller, recorder: recorder)
+    }
+
+    @MainActor
+    private func removeHostedLayout(_ host: HostedAutofillLayout) {
+        host.window.isHidden = true
+        host.window.rootViewController = nil
+    }
+
+    @MainActor
+    private func assertHostedFrames(
+        _ host: HostedAutofillLayout,
+        viewportWidth: CGFloat,
+        contentWidth: CGFloat,
+        hasAddButton: Bool,
+    ) throws {
+        let viewport = try XCTUnwrap(host.recorder.frames["VaultAutofillViewport"])
+        let content = try XCTUnwrap(host.recorder.frames["VaultAutofillContent"])
+        let row = try XCTUnwrap(host.recorder.frames["VaultAutofillItemRow"])
+        XCTAssertEqual(viewport.width, viewportWidth, accuracy: 0.5)
+        XCTAssertEqual(content.width, contentWidth, accuracy: 0.5)
+        XCTAssertEqual(content.midX, viewport.midX, accuracy: 0.5)
+        XCTAssertEqual(content.minX - viewport.minX, (viewportWidth - contentWidth) / 2, accuracy: 0.5)
+        XCTAssertGreaterThan(row.width, 0)
+        XCTAssertGreaterThan(row.height, 0)
+        XCTAssertGreaterThanOrEqual(row.minX, content.minX - 1)
+        XCTAssertLessThanOrEqual(row.maxX, content.maxX + 1)
+        XCTAssertGreaterThanOrEqual(row.minY, viewport.minY - 1)
+        XCTAssertLessThanOrEqual(row.maxY, viewport.maxY + 1)
+        if hasAddButton {
+            let button = try XCTUnwrap(host.recorder.frames["VaultAutofillAddButton"])
+            XCTAssertGreaterThan(button.width, 0)
+            XCTAssertGreaterThan(button.height, 0)
+            XCTAssertGreaterThanOrEqual(button.minX, content.minX - 1)
+            XCTAssertLessThanOrEqual(button.maxX, content.maxX + 1)
+            XCTAssertGreaterThanOrEqual(button.minY, viewport.minY - 1)
+            XCTAssertLessThanOrEqual(button.maxY, viewport.maxY + 1)
+            XCTAssertEqual(button.maxX, content.maxX, accuracy: 0.5)
+        }
+    }
+    #endif
 }
+
+#if DEBUG
+@MainActor
+private final class AutofillFrameRecorder {
+    var frames: [String: CGRect] = [:]
+}
+
+@MainActor
+private struct AutofillLayoutTestHost: View {
+    let subject: VaultAutofillListView
+    let recorder: AutofillFrameRecorder
+
+    var body: some View {
+        subject
+            .coordinateSpace(name: VaultListLayoutFramePreferenceKey.coordinateSpaceName)
+            .onPreferenceChange(VaultListLayoutFramePreferenceKey.self) { frames in
+                recorder.frames = frames
+            }
+            .ignoresSafeArea(.container, edges: .horizontal)
+    }
+}
+
+@MainActor
+private struct HostedAutofillLayout {
+    let window: UIWindow
+    let controller: UIHostingController<AutofillLayoutTestHost>
+    let recorder: AutofillFrameRecorder
+}
+#endif

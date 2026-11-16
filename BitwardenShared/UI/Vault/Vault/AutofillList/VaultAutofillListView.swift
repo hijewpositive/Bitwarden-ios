@@ -366,6 +366,7 @@ private struct VaultAutofillListSearchableView: View {
             ),
             timeProvider: timeProvider,
         )
+        .vaultListLayoutFrame("VaultAutofillItemRow")
     }
 
     /// The content displayed in the view.
@@ -390,6 +391,7 @@ private struct VaultAutofillListSearchableView: View {
                     addItemFloatingActionButton(hidden: !store.state.showAddItemButton) {
                         store.send(.addTapped(fromFAB: true))
                     }
+                    .vaultListLayoutFrame("VaultAutofillAddButton")
                 }
                 .hidden(isSearching)
 
@@ -399,6 +401,7 @@ private struct VaultAutofillListSearchableView: View {
             .frame(width: VaultListContentLayout.contentWidth(for: geometry.size.width))
             .vaultListLayoutFrame("VaultAutofillContent")
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .vaultListLayoutFrame("VaultAutofillViewport")
         }
         .accessibilityIdentifier("VaultAutofillContent")
         .background(SharedAsset.Colors.backgroundPrimary.swiftUIColor.ignoresSafeArea())
