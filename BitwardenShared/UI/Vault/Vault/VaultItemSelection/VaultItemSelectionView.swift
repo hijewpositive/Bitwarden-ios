@@ -100,21 +100,32 @@ private struct VaultItemSelectionSearchableView: View {
         // the search interface since VoiceOver still reads the elements below the overlay,
         // which is not ideal.
 
-        ZStack {
-            let isSearching = isSearching
-                || !store.state.searchText.isEmpty
-                || !store.state.searchResults.isEmpty
+        GeometryReader { geometry in
+            ZStack {
+                let isSearching = isSearching
+                    || !store.state.searchText.isEmpty
+                    || !store.state.searchResults.isEmpty
 
-            contentView()
-                .overlay(alignment: .bottomTrailing) {
-                    addItemFloatingActionButton {
-                        store.send(.addTapped)
+                contentView()
+                    .overlay(alignment: .bottomTrailing) {
+                        addItemFloatingActionButton {
+                            store.send(.addTapped)
+                        }
+                        .vaultListLayoutFrame("VaultItemSelectionAddButton")
                     }
-                }
-                .hidden(isSearching)
+                    .hidden(isSearching)
 
-            searchContentView()
-                .hidden(!isSearching)
+                searchContentView()
+                    .hidden(!isSearching)
+            }
+            .frame(width: VaultListContentLayout.contentWidth(for: geometry.size.width))
+            .vaultListLayoutFrame("VaultItemSelectionContent")
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .overlay {
+                Color.clear
+                    .vaultListLayoutFrame("VaultItemSelectionViewport")
+                    .allowsHitTesting(false)
+            }
         }
         .onChange(of: isSearching) { newValue in
             store.send(.searchStateChanged(isSearching: newValue))
@@ -244,6 +255,7 @@ private struct VaultItemSelectionSearchableView: View {
             ),
             timeProvider: CurrentTime(),
         )
+        .vaultListLayoutFrame("VaultItemSelectionRow")
     }
 }
 
