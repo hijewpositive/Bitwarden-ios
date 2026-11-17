@@ -1,3 +1,4 @@
+import AuthenticationServices
 import BitwardenKit
 import BitwardenKitMocks
 import BitwardenSdk
@@ -82,6 +83,7 @@ class AuthServiceTests: BitwardenTestCase { // swiftlint:disable:this type_body_
             stateService: stateService,
             systemDevice: systemDevice,
             trustDeviceService: trustDeviceService,
+            appBundleIdentifier: "com.8bit.bitwarden",
         )
     }
 
@@ -104,6 +106,86 @@ class AuthServiceTests: BitwardenTestCase { // swiftlint:disable:this type_body_
     }
 
     // MARK: Tests
+
+    /// Exercise the service redirect, session callback and rejected password request together.
+    /// The session uses a synthetic URL and is constructed but never started.
+    func test_callbackRouting_serviceWiringAndRejectedPasswordRequest() async throws {
+        guard #available(iOS 17.4, *) else { throw XCTSkip("Requires iOS 17.4 HTTPS callbacks") }
+        let cases: [(String, RegionType, String, String, AuthWebSessionCallback)] = [
+            ("com.sputnicity.bitwarden-duo", .unitedStates, "bitwarden://sso-callback", "bitwarden", .customScheme("bitwarden")),
+            ("com.8bit.bitwarden", .unitedStates, "https://bitwarden.com/sso-callback", "https", .https(host: "bitwarden.com", path: "/duo-callback")),
+            ("com.sputnicity.bitwarden-duo", .selfHosted, "bitwarden://sso-callback", "bitwarden", .customScheme("bitwarden")),
+            ("com.8bit.bitwarden", .selfHosted, "bitwarden://sso-callback", "bitwarden", .customScheme("bitwarden")),
+        ]
+        for (bundleID, region, redirect, hint, expectedCallback) in cases {
+            environmentService.region = region
+            var observedCallback: AuthWebSessionCallback?
+            subject = DefaultAuthService(
+                accountAPIService: accountAPIService,
+                appIDService: AppIDService(appIDSettingsStore: appIDSettingsStore),
+                authAPIService: authAPIService,
+                clientService: clientService,
+                configService: configService,
+                credentialIdentityStore: credentialIdentityStore,
+                environmentService: environmentService,
+                errorReporter: errorReporter,
+                keychainRepository: keychainRepository,
+                policyService: policyService,
+                stateService: stateService,
+                systemDevice: systemDevice,
+                trustDeviceService: trustDeviceService,
+                appBundleIdentifier: bundleID,
+                webSessionFactory: { url, callback, completion in
+                    observedCallback = callback
+                    return ASWebAuthenticationSession(url: url, callbackURLScheme: "test-only", completionHandler: completion)
+                },
+            )
+
+            client.requests.removeAll()
+            client.result = .httpSuccess(testData: .preValidateSingleSignOn)
+            clientService.mockGenerators.passwordReturnValue = "SYNTHETIC"
+            let result = try await subject.generateSingleSignOnUrl(from: "SyntheticOrg")
+            let actualRedirect = URLComponents(url: result.url, resolvingAgainstBaseURL: false)?
+                .queryItems?.first { $0.name == "redirect_uri" }?.value
+            XCTAssertEqual(actualRedirect, redirect, "\(bundleID), \(region)")
+
+            _ = subject.webAuthenticationSession(
+                url: URL(string: "https://example.invalid/duo")!,
+                callbackKind: .duo,
+                completionHandler: { _, _ in },
+            )
+            XCTAssertEqual(observedCallback, expectedCallback, "\(bundleID), \(region)")
+
+            client.requests.removeAll()
+            client.results = [
+                .httpSuccess(testData: .preLoginSuccess),
+                .httpFailure(statusCode: 400, headers: [:], data: APITestData.identityTokenTwoFactorError.data),
+            ]
+            appIDSettingsStore.appID = "synthetic-app-id"
+            clientService.mockAuth.hashPasswordReturnValue = "synthetic-hash"
+            await stateService.setTwoFactorToken("synthetic-old-token", email: "test@example.invalid")
+            await assertAsyncThrows(error: IdentityTokenRequestError.twoFactorRequired(
+                AuthMethodsData.fixture(), nil, "exampleToken",
+            )) {
+                try await subject.loginWithMasterPassword(
+                    "synthetic-password", username: "test@example.invalid", isNewAccount: false,
+                )
+            }
+            XCTAssertEqual(client.requests.count, 2)
+            let body = try XCTUnwrap(client.requests.last?.body)
+            var components = URLComponents()
+            components.percentEncodedQuery = try XCTUnwrap(String(data: body, encoding: .utf8))
+            let items = try XCTUnwrap(components.queryItems)
+            func value(_ name: String) -> String? { items.first { $0.name == name }?.value }
+            XCTAssertEqual(value("deeplinkScheme"), hint, "\(bundleID), \(region)")
+            XCTAssertEqual(value("grant_type"), "password")
+            XCTAssertEqual(value("username"), "test@example.invalid")
+            XCTAssertEqual(value("password"), "synthetic-hash")
+            XCTAssertEqual(value("twoFactorToken"), "synthetic-old-token")
+            let storedToken = await stateService.getTwoFactorToken(email: "test@example.invalid")
+            XCTAssertNil(storedToken)
+        }
+    }
 
     /// `answerLoginRequest(_:approve:)` encrypts the key and answers the login request.
     func test_answerLoginRequest() async throws {
@@ -299,8 +381,7 @@ class AuthServiceTests: BitwardenTestCase { // swiftlint:disable:this type_body_
 
         let redirectUri = URLComponents(url: result.url, resolvingAgainstBaseURL: false)?
             .queryItems?.first { $0.name == "redirect_uri" }?.value
-        if #available(iOS 17.4, *),
-           AuthWebSessionCallbackPolicy.permitsHttpsCallback(bundleIdentifier: Bundle.main.bundleIdentifier) {
+        if #available(iOS 17.4, *) {
             XCTAssertEqual(redirectUri, "https://bitwarden.com/sso-callback")
         } else {
             XCTAssertEqual(redirectUri, "bitwarden://sso-callback")
@@ -319,8 +400,7 @@ class AuthServiceTests: BitwardenTestCase { // swiftlint:disable:this type_body_
 
         let redirectUri = URLComponents(url: result.url, resolvingAgainstBaseURL: false)?
             .queryItems?.first { $0.name == "redirect_uri" }?.value
-        if #available(iOS 17.4, *),
-           AuthWebSessionCallbackPolicy.permitsHttpsCallback(bundleIdentifier: Bundle.main.bundleIdentifier) {
+        if #available(iOS 17.4, *) {
             XCTAssertEqual(redirectUri, "https://bitwarden.eu/sso-callback")
         } else {
             XCTAssertEqual(redirectUri, "bitwarden://sso-callback")
@@ -339,8 +419,7 @@ class AuthServiceTests: BitwardenTestCase { // swiftlint:disable:this type_body_
 
         let redirectUri = URLComponents(url: result.url, resolvingAgainstBaseURL: false)?
             .queryItems?.first { $0.name == "redirect_uri" }?.value
-        if #available(iOS 17.4, *),
-           AuthWebSessionCallbackPolicy.permitsHttpsCallback(bundleIdentifier: Bundle.main.bundleIdentifier) {
+        if #available(iOS 17.4, *) {
             XCTAssertEqual(redirectUri, "https://bitwarden.pw/sso-callback")
         } else {
             XCTAssertEqual(redirectUri, "bitwarden://sso-callback")

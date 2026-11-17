@@ -21,6 +21,7 @@ struct Env { let region: Region }
 final class Subject {
  let environmentService: Env
  let callbackUrlScheme = "bitwarden"
+ var appBundleIdentifier: String? { Bundle.main.bundleIdentifier }
  init(_ host: String?) { environmentService = Env(region: Region(authCallbackHost: host)) }
 ''' + https + '\n' + scheme + '\n' + url + '\n' + resolve + '''
  func values() -> (String, String, String, AuthWebSessionCallback) { (deeplinkScheme, callbackUrl(for: .singleSignOn), callbackUrl(for: .duo), resolveCallback(for: .duo)) }

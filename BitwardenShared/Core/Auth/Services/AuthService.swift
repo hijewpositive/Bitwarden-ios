@@ -387,6 +387,12 @@ class DefaultAuthService: AuthService { // swiftlint:disable:this type_body_leng
     /// The service used by the application to manage account state.
     private let stateService: StateService
 
+    /// The app identity used to decide eligibility for cloud HTTPS callbacks.
+    private let appBundleIdentifier: String?
+
+    /// Optional session factory, used to inspect callback wiring without starting a web session.
+    private let webSessionFactory: ((URL, AuthWebSessionCallback, @escaping ASWebAuthenticationSession.CompletionHandler) -> ASWebAuthenticationSession)?
+
     /// The object used by the application to retrieve information about this device.
     private let systemDevice: SystemDevice
 
@@ -419,7 +425,7 @@ class DefaultAuthService: AuthService { // swiftlint:disable:this type_body_leng
     private var supportsHttpsAuthCallback: Bool {
         guard #available(iOS 17.4, *) else { return false }
         return environmentService.region.authCallbackHost != nil
-            && AuthWebSessionCallbackPolicy.permitsHttpsCallback(bundleIdentifier: Bundle.main.bundleIdentifier)
+            && AuthWebSessionCallbackPolicy.permitsHttpsCallback(bundleIdentifier: appBundleIdentifier)
     }
 
     // MARK: Initialization
@@ -456,6 +462,9 @@ class DefaultAuthService: AuthService { // swiftlint:disable:this type_body_leng
         stateService: StateService,
         systemDevice: SystemDevice,
         trustDeviceService: TrustDeviceService,
+        appBundleIdentifier: String? = Bundle.main.bundleIdentifier,
+        webSessionFactory: ((URL, AuthWebSessionCallback, @escaping ASWebAuthenticationSession.CompletionHandler)
+            -> ASWebAuthenticationSession)? = nil,
     ) {
         self.accountAPIService = accountAPIService
         self.appIDService = appIDService
@@ -470,6 +479,8 @@ class DefaultAuthService: AuthService { // swiftlint:disable:this type_body_leng
         self.stateService = stateService
         self.systemDevice = systemDevice
         self.trustDeviceService = trustDeviceService
+        self.appBundleIdentifier = appBundleIdentifier
+        self.webSessionFactory = webSessionFactory
 
         // Clear the cached SSO/TDE master password policy whenever the active account changes,
         // so it doesn't linger if the user switches away (or logs out) without unlocking.
@@ -942,7 +953,11 @@ class DefaultAuthService: AuthService { // swiftlint:disable:this type_body_leng
         callbackKind: AuthWebSessionCallbackKind,
         completionHandler: @escaping ASWebAuthenticationSession.CompletionHandler,
     ) -> ASWebAuthenticationSession {
-        switch resolveCallback(for: callbackKind) {
+        let callback = resolveCallback(for: callbackKind)
+        if let webSessionFactory {
+            return webSessionFactory(url, callback, completionHandler)
+        }
+        return switch callback {
         case let .customScheme(scheme):
             ASWebAuthenticationSession(
                 url: url,
